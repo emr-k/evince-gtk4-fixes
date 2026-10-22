@@ -1,0 +1,12 @@
+diff --git a/libview/evince-view.ui b/libview/evince-view.ui
+index 899aec4..b991ead 100644
+--- a/libview/evince-view.ui
++++ b/libview/evince-view.ui
+@@ -26,6 +26,7 @@
+     </child>
+     <child>
+       <object class="GtkEventControllerScroll">
++        <property name="flags">both-axes</property>
+         <signal name="scroll" handler="ev_view_scroll_event" />
+       </object>
+     </child>

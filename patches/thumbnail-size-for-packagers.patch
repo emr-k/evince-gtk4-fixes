@@ -1,0 +1,12 @@
+diff --git a/shell/evince.css b/shell/evince.css
+index 6d3f81c..0ee91b2 100644
+--- a/shell/evince.css
++++ b/shell/evince.css
+@@ -78,3 +78,7 @@ searchbar.evsearchbox box {
+ #ev-recent-view gridview child {
+     margin: 6px;
+ }
++
++evsidebarthumbnails iconview {
++    -gtk-icon-size: 1000px;
++}
