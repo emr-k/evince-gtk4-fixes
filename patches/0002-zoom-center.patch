@@ -1,0 +1,22 @@
+diff --git a/libview/ev-view.c b/libview/ev-view.c
+index 1967270..ad030af 100644
+--- a/libview/ev-view.c
++++ b/libview/ev-view.c
+@@ -4451,9 +4451,15 @@ ev_view_scroll_event (GtkEventControllerScroll *self, gdouble dx, gdouble dy, Gt
+ 	state = gtk_event_controller_get_current_event_state (GTK_EVENT_CONTROLLER (self))
+ 			 & gtk_accelerator_get_default_mod_mask ();
+ 	direction = gdk_scroll_event_get_direction (event);
+-	gdk_event_get_axis (GDK_EVENT (event), GDK_AXIS_X, &x);
+-	gdk_event_get_axis (GDK_EVENT (event), GDK_AXIS_Y, &y);
++	{
++		/* GTK 4 scroll events carry no position, so x and y would stay
++		 * unset; use the pointer position relative to the view. */
++		gint ix, iy;
+ 
++		ev_document_misc_get_pointer_position (widget, &ix, &iy);
++		x = ix;
++		y = iy;
++	}
+ 
+ 	if (state == GDK_CONTROL_MASK) {
+ 		ev_document_model_set_sizing_mode (priv->model, EV_SIZING_FREE);

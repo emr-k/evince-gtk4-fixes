@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Fixes Ctrl + mouse wheel zoom in Evince 49 by rebuilding your distribution's
-# Evince package with patches/0001-ctrl-scroll-zoom.patch and installing it.
+# Evince package with the patches in ./patches and installing it.
+#
+#   ./fix-scroll-zoom.sh
 #
 # Supported: Debian, Ubuntu and derivatives (apt); Fedora and derivatives (dnf).
 # Anything else: see "Other distributions" in the README.
@@ -9,20 +11,24 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PATCH="$HERE/patches/0001-ctrl-scroll-zoom.patch"
-WORK="${WORK:-$HOME/evince-scroll-zoom-build}"
+BASE="${WORK:-$HOME/evince-scroll-zoom-build}"
+RUN="$BASE/run-$(date +%Y%m%d-%H%M%S)"   # every run starts from a fresh, unpatched source
 
-[ -f "$PATCH" ] || { echo "Missing $PATCH" >&2; exit 1; }
+PATCHES=("$HERE/patches/0001-ctrl-scroll-zoom.patch" "$HERE/patches/0002-zoom-center.patch" "$HERE/patches/0003-layout-while-loading.patch")
+
+for p in "${PATCHES[@]}"; do
+    [ -f "$p" ] || { echo "Missing $p" >&2; exit 1; }
+done
 [ -r /etc/os-release ] || { echo "Cannot detect the distribution (no /etc/os-release)." >&2; exit 1; }
 # shellcheck disable=SC1091
 . /etc/os-release
 
 patch_failed() {
     echo >&2
-    echo "The patch did not apply." >&2
+    echo "A patch did not apply." >&2
     echo "Possible reasons: this Evince version is not affected (the file" >&2
-    echo "libview/evince-view.ui exists only from Evince 49), your distribution" >&2
-    echo "already fixed it, or the source was patched by an earlier run." >&2
+    echo "libview/evince-view.ui exists only from Evince 49) or your distribution" >&2
+    echo "already changed the same code." >&2
     exit 1
 }
 
@@ -45,41 +51,47 @@ build_deb() {
     enable_deb_src
     sudo apt update
     sudo apt install -y build-essential fakeroot
-    mkdir -p "$WORK"
-    cd "$WORK"
+    mkdir -p "$RUN"
+    cd "$RUN"
     sudo apt build-dep -y evince
     apt source evince
-    local src
-    src="$(ls -d "$WORK"/evince-*/ | head -n 1)"
+    local src p
+    src="$(ls -d "$RUN"/evince-*/ | head -n 1)"
     cd "$src"
-    patch -p1 --dry-run < "$PATCH" > /dev/null || patch_failed
-    patch -p1 < "$PATCH"
+    for p in "${PATCHES[@]}"; do
+        patch -p1 --dry-run < "$p" > /dev/null || patch_failed
+        patch -p1 < "$p"
+    done
     DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -us -uc -b
-    cd "$WORK"
+    cd "$RUN"
     # dev, doc and debug-symbol packages are not needed
-    sudo dpkg -i $(ls "$WORK"/*.deb | grep -v -e '-dev_' -e '-doc_' -e dbgsym)
+    sudo dpkg -i $(ls "$RUN"/*.deb | grep -v -e '-dev_' -e '-doc_' -e dbgsym)
 }
 
 # ---------------------------------------------------------------- Fedora family
 build_rpm() {
-    local top="$WORK/rpmbuild" spec
+    local top="$RUN/rpmbuild" spec i n
     sudo dnf install -y rpm-build dnf-plugins-core
     sudo dnf builddep -y evince
-    mkdir -p "$WORK" "$top"
-    cd "$WORK"
+    mkdir -p "$RUN" "$top"
+    cd "$RUN"
     dnf download --source evince
-    rpm --define "_topdir $top" -ivh "$WORK"/evince-*.src.rpm
+    rpm --define "_topdir $top" -ivh "$RUN"/evince-*.src.rpm
     spec="$top/SPECS/evince.spec"
-    cp "$PATCH" "$top/SOURCES/"
 
-    # Register the patch, make sure it gets applied, and mark the release
-    sed -i '0,/^Source0\?:.*/s//&\nPatch9001: 0001-ctrl-scroll-zoom.patch/' "$spec"
-    if ! grep -q '^%autosetup' "$spec"; then
-        sed -i '0,/^%setup.*/s//&\n%patch -P 9001 -p1/' "$spec"
-    fi
+    # Register every patch (in reverse, so the final order is ascending) and
+    # make sure the spec applies it.
+    for ((i = ${#PATCHES[@]} - 1; i >= 0; i--)); do
+        n=$((9001 + i))
+        cp "${PATCHES[$i]}" "$top/SOURCES/"
+        sed -i "0,/^Source0\?:.*/s//&\nPatch$n: $(basename "${PATCHES[$i]}")/" "$spec"
+        if ! grep -q '^%autosetup' "$spec"; then
+            sed -i "0,/^%setup.*/s//&\n%patch -P $n -p1/" "$spec"
+        fi
+    done
     sed -i '0,/^Release:.*/s/^\(Release:[[:space:]]*\)\(.*\)$/\1\2.scrollfix/' "$spec"
 
-    # Prep step applies the patch; fail early and clearly if it does not
+    # The prep step applies the patches; fail early and clearly if one does not
     rpmbuild --define "_topdir $top" -bp "$spec" || patch_failed
     rpmbuild --define "_topdir $top" -bb "$spec"
     # devel, doc and debug packages are not needed

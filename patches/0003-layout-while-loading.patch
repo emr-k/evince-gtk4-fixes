@@ -1,0 +1,22 @@
+Subject: [PATCH] EvView: do not skip layout while the current page is loading
+
+ev_view_size_allocate returned early while priv->loading was set. The
+flag is set while drawing a page whose texture is not ready yet, and
+cleared only when that page is drawn again. During a fast zoom-out the
+scroll position can end up outside the shrunken document, the page is
+never drawn, and the skipped allocation is not requested again: the
+adjustment keeps its old, too large upper bound and the view shows
+empty space. Evince 46.3 only skips layout when there is no document.
+
+---
+--- a/libview/ev-view.c
++++ b/libview/ev-view.c
+@@ -4392,7 +4392,7 @@
+ 	EvView *view = EV_VIEW (widget);
+ 	EvViewPrivate *priv = GET_PRIVATE (view);
+ 
+-	if (!priv->document || ev_view_is_loading (view))
++	if (!priv->document)
+ 		return;
+ 
+ 	if (priv->sizing_mode == EV_SIZING_FIT_WIDTH ||
