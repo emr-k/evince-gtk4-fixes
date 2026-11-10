@@ -1,10 +1,13 @@
 # evince-gtk4-fixes
 
+> **Status (2026-11-10): the thumbnail fix works; the scroll-zoom patches are experimental and not recommended.**
+> On the one machine they were tested on, Evince 49 with all three scroll-zoom patches crashed (SIGSEGV) within about 2-3 minutes of Ctrl + wheel zooming in a 17-page PDF. See [Known crash](#known-crash). The maintainer of this repository switched to **Papers**, the GNOME document viewer that continues Evince (version 50.2 came from Ubuntu 26.04's regular updates), and was satisfied with it. There was no systematic comparison. If you only want a working PDF viewer on Ubuntu 26.04, trying Papers is the simplest route.
+
 Fixes for three regressions in Evince 49 (the GTK 4 version), first seen on Ubuntu 26.04 LTS:
 
 | Symptom | Fix | Needs a rebuild? |
 |---|---|---|
-| Ctrl + mouse wheel no longer zooms the document, zoom does not follow the cursor, and a fast zoom-out can leave the view on empty space | [`fix-scroll-zoom.sh`](fix-scroll-zoom.sh) | Yes, three small patches to Evince |
+| Ctrl + mouse wheel no longer zooms the document, zoom does not follow the cursor, and a fast zoom-out can leave the view on empty space | [`fix-scroll-zoom.sh`](fix-scroll-zoom.sh) | Yes, three small patches to Evince (**experimental, known crash**) |
 | Page thumbnails in the sidebar are tiny (about 11×16 px) | [`fix-thumbnails.sh`](fix-thumbnails.sh) | No, one CSS rule |
 
 The two fixes are independent. Use either or both.
@@ -16,7 +19,7 @@ git clone <this repository>
 cd evince-gtk4-fixes
 
 ./fix-thumbnails.sh        # seconds, no root; undo with: ./fix-thumbnails.sh remove
-./fix-scroll-zoom.sh       # rebuilds and installs your distribution's Evince (uses sudo)
+I_UNDERSTAND=1 ./fix-scroll-zoom.sh   # experimental, see Known crash; rebuilds and installs your Evince (uses sudo)
 ```
 
 Close all Evince windows and open a PDF again afterwards. Read the scripts before running them; they are short.
@@ -63,11 +66,26 @@ Not confirmed: an undefined centre can also push the view to the very start or e
 
 Build files go to `~/evince-scroll-zoom-build` (override with `WORK=/some/dir`). The rebuilt packages keep the official version number (Debian family) or add `.scrollfix` to the release (Fedora family), so a newer official package replaces them on the next update.
 
+**Debug symbols.** `I_UNDERSTAND=1 WITH_DEBUG=1 ./fix-scroll-zoom.sh` (Debian family only) also installs the debug-symbol packages of `libevview` and `libevdocument` from your own build, so that a crash backtrace under `gdb` shows function names. Keep the build directory; it contains the matching symbol packages.
+
 **Going back.** Reinstall the official packages. On Debian or Ubuntu: `dpkg -l | grep -i evince`, then `sudo apt install --reinstall <those names>`. On Fedora: `sudo dnf distro-sync 'evince*'`.
 
 **Upstream.** The problem is tracked in [evince#2131](https://gitlab.gnome.org/GNOME/evince/-/work_items/2131), linked to Debian bug #1127562. I could not open the related merge request and do not know whether it carries the same fix. On 2026-10-22, `evince-view.ui` was unchanged between `49.alpha` and the GitHub mirror's main branch.
 
 **Zoom step size.** With a mouse wheel, zoom moves in steps of 20 % per notch. That is not part of this bug: Evince 46.3 (GTK 3) uses the same factor and the same logic. I tried an extra patch that scaled the factor by the wheel's movement and used 10 % steps; on one mouse it felt worse, so it is not included.
+
+## Known crash
+
+With the three patches installed, Evince crashed with SIGSEGV after 2-3 minutes of Ctrl + wheel zooming (zoom levels up to about 5x) on a 17-page PDF. This was reproducible on that machine. A backtrace taken with debug symbols of the same build showed:
+
+- The crash is in `ev_scheduler_thread_job_cancelled` (`libview/ev-job-scheduler.c`, line 162), on the line that reads `job_queue[job->priority]`.
+- It is reached from `ev_job_cancel`, called from `ev_pixbuf_cache_update_range` and `view_update_range_and_current_page`, which are called from `ev_view_size_allocate` through a signal.
+- At the crash, the scheduler job structure held garbage (`priority = 931211992`), so the pointer no longer pointed to a valid structure. My reading is that a render job is being cancelled while a worker thread frees it, but the backtrace does not show who freed it. I did not verify this.
+- Fedora's Evince 44.3 (GTK 3) has a bug report with a crash in the same function and a similar call chain ([Red Hat Bugzilla 2229552](https://bugzilla.redhat.com/show_bug.cgi?id=2229552)), so the problem may be older than these patches.
+
+**Not determined:** whether the patches make the crash more likely. `0003` makes the layout code run while pages are loading, which reaches this cancel path more often; this is a possibility, not a measurement. A comparison without `0003` (`I_UNDERSTAND=1 SKIP_PATCHES="0003" ./fix-scroll-zoom.sh`) was not completed. The stock package could not be compared, because without patch `0001` Ctrl + wheel does not zoom at all.
+
+Earlier in this README `0003` is described as working. That description stays correct for what it measured (the scroll range matched the document after fast zooms on one machine), but the same build later crashed, so do not read it as "the patches are safe".
 
 ## Thumbnails: details
 

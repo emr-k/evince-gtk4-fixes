@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fixes Ctrl + mouse wheel zoom in Evince 49 by rebuilding your distribution's
+# EXPERIMENTAL (known crash, see README). Fixes Ctrl + mouse wheel zoom in Evince 49 by rebuilding your distribution's
 # Evince package with the patches in ./patches and installing it.
 #
 #   ./fix-scroll-zoom.sh
@@ -16,9 +16,32 @@ RUN="$BASE/run-$(date +%Y%m%d-%H%M%S)"   # every run starts from a fresh, unpatc
 
 PATCHES=("$HERE/patches/0001-ctrl-scroll-zoom.patch" "$HERE/patches/0002-zoom-center.patch" "$HERE/patches/0003-layout-while-loading.patch")
 
+# For testing: SKIP_PATCHES="0003" ./fix-scroll-zoom.sh leaves out every patch
+# whose file name contains one of the given words.
+if [ -n "${SKIP_PATCHES:-}" ]; then
+    kept=()
+    for p in "${PATCHES[@]}"; do
+        skip=0
+        for word in $SKIP_PATCHES; do
+            case "$(basename "$p")" in *"$word"*) skip=1 ;; esac
+        done
+        [ "$skip" = 1 ] || kept+=("$p")
+    done
+    PATCHES=("${kept[@]}")
+    echo "Using patches: ${PATCHES[*]##*/}"
+fi
+
 for p in "${PATCHES[@]}"; do
     [ -f "$p" ] || { echo "Missing $p" >&2; exit 1; }
 done
+
+if [ -z "${I_UNDERSTAND:-}" ]; then
+    echo "WARNING: these patches are experimental. On the machine they were tested on," >&2
+    echo "Evince crashed within minutes of Ctrl + wheel zooming. See 'Known crash' in" >&2
+    echo "the README. Trying Papers instead may be simpler." >&2
+    echo "To continue anyway, run:  I_UNDERSTAND=1 $0" >&2
+    exit 1
+fi
 [ -r /etc/os-release ] || { echo "Cannot detect the distribution (no /etc/os-release)." >&2; exit 1; }
 # shellcheck disable=SC1091
 . /etc/os-release
@@ -66,6 +89,19 @@ build_deb() {
     cd "$RUN"
     # dev, doc and debug-symbol packages are not needed
     sudo dpkg -i $(ls "$RUN"/*.deb | grep -v -e '-dev_' -e '-doc_' -e dbgsym)
+
+    # WITH_DEBUG=1 ./fix-scroll-zoom.sh also installs the debug symbols of the
+    # two libraries, so a crash backtrace shows function names.
+    if [ -n "${WITH_DEBUG:-}" ]; then
+        local dbg
+        dbg=$(ls "$RUN"/libevview*dbgsym*.*deb "$RUN"/libevdocument*dbgsym*.*deb 2>/dev/null || true)
+        if [ -n "$dbg" ]; then
+            # shellcheck disable=SC2086
+            sudo dpkg -i $dbg
+        else
+            echo "No debug-symbol packages found in $RUN." >&2
+        fi
+    fi
 }
 
 # ---------------------------------------------------------------- Fedora family
